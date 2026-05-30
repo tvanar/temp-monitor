@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>hwmonitor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>hw<span>monitor</span></h1>
+      <span class="header-meta" id="headerMeta">connecting...</span>
+    </header>
+    <div class="dashboard" id="dashboard"></div>
+  </div>
+
+<script>
+const STATS_URL = '/api/stats';
+const TEMPS_URL = '/api/temps?minutes=60';
+const POLL_INTERVAL = 3000;
+const TEMPS_INTERVAL = 30000;
+
+let statsCache = {};
+let tempsCache = {};
+
+function fmtBytes(bytes) {
+  if (bytes >= 1<<30) return (bytes / (1<<30)).toFixed(1) + 'G';
+  if (bytes >= 1<<20) return (bytes / (1<<20)).toFixed(1) + 'M';
+  if (bytes >= 1<<10) return (bytes / (1<<10)).toFixed(1) + 'K';
+  return bytes + 'B';
+}
+
+function fmtFreq(freq) {
+  if (freq >= 1000000) return (freq / 1000000).toFixed(1) + ' GHz';
+  if (freq >= 1000) return (freq / 1000).toFixed(1) + ' MHz';
+  return freq + ' Hz';
+}
+
+function fmtTemp(temp) {
+  return temp.toFixed(1) + '°C';
+}
+
+function pct(val) {
+  return val.toFixed(1) + '%';
+}
+
+function buildOrUpdateCards(stats) {
+  const dash = document.getElementById('dashboard');
+  const existing = new Set();
+
+  stats.forEach(s => {
+    existing.add(s.hostname);
+    let card = document.getElementById('card-' + s.hostname);
+    if (!card) {
+      card = document.createElement('div');
+      card.className = 'agent-card';
+      card.id = 'card-' + s.hostname;
+      card.innerHTML = `
+        <div class="agent-header">
+          <span class="agent-hostname"></span>
+          <span class="agent-status">ONLINE</span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">CPU</span>
+          <div class="stat-bar-wrapper">
+            <div class="stat-bar-bg">
+              <div class="stat-bar-fill cpu"></div>
+            </div>
+          </div>
+          <span class="stat-value freq"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">RAM</span>
+          <div class="stat-bar-wrapper">
+            <div class="stat-bar-bg">
+              <div class="stat-bar-fill ram"></div>
+            </div>
+          </div>
+          <span class="stat-value ram"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">TEMP</span>
+          <div class="stat-bar-wrapper">
+            <div class="stat-bar-bg">
+              <div class="stat-bar-fill temp"></div>
+            </div>
+          </div>
+          <span class="stat-value temp-val"></span>
+        </div>
+        <div class="chart-container">
+          <div class="chart-title">TEMPERATURE / LAST 60 MIN</div>
+          <canvas></canvas>
+        </div>
+        <div class="status-footer">
+          <span class="last-seen">waiting for data...</span>
+        </div>
+      `;
+      dash.appendChild(card);
+    }
+
+    card.classList.remove('offline');
+    card.querySelector('.agent-hostname').textContent = s.hostname;
+    card.querySelector('.agent-status').textContent = 'ONLINE';
+    card.querySelector('.agent-status').className = 'agent-status';
+
+    const cpuBar = card.querySelector('.stat-bar-fill.cpu');
+    cpuBar.style.width = Math.min(s.cpu_usage, 100) + '%';
+    cpuBar.parentElement.nextElementSibling.textContent = pct(s.cpu_usage) + ' / ' + fmtFreq(s.cpu_freq);
+
+    const rpct = s.ram_total > 0 ? (s.ram_usage / s.ram_total * 100) : 0;
+    const ramBar = card.querySelector('.stat-bar-fill.ram');
+    ramBar.style.width = Math.min(rpct, 100) + '%';
+    ramBar.parentElement.nextElementSibling.textContent = fmtBytes(s.ram_usage) + ' / ' + fmtBytes(s.ram_total);
+
+    const tpct = Math.min(s.temp / 100 * 100, 100);
+    const tempBar = card.querySelector('.stat-bar-fill.temp');
+    tempBar.style.width = tpct + '%';
+    tempBar.parentElement.nextElementSibling.textContent = fmtTemp(s.temp);
+
+    card.querySelector('.last-seen').textContent = new Date().toLocaleTimeString();
+
+    statsCache[s.hostname] = s;
+  });
+
+  document.querySelectorAll('.agent-card').forEach(card => {
+    const hostname = card.querySelector('.agent-hostname').textContent;
+    if (!existing.has(hostname)) {
+      card.classList.add('offline');
+      card.querySelector('.agent-status').textContent = 'OFFLINE';
+      card.querySelector('.agent-status').className = 'agent-status offline';
+    }
+  });
+}
+
+function updateHeaderMeta() {
+  const count = Object.keys(statsCache).length;
+  const el = document.getElementById('headerMeta');
+  if (count > 0) {
+    const agents = Object.keys(statsCache).join(', ');
+    el.textContent = count + ' agent' + (count > 1 ? 's' : '') + ' online · ' + agents;
+  } else {
+    el.textContent = 'connecting...';
+  }
+}
+
+function drawCharts(temps) {
+  tempsCache = temps;
+  Object.keys(temps).forEach(hostname => {
+    const card = document.getElementById('card-' + hostname);
+    if (!card) return;
+    const canvas = card.querySelector('canvas');
+    if (!canvas) return;
+    const points = temps[hostname];
+    if (!points || points.length < 2) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    if (w < 10 || h < 10) return;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    const isNarrow = w < 220;
+    const fontSize = isNarrow ? 7 : 10;
+    const pad = {
+      top: 4,
+      bottom: isNarrow ? 12 : 18,
+      left: isNarrow ? 24 : 36,
+      right: 4,
+    };
+    const cw = w - pad.left - pad.right;
+    const ch = h - pad.top - pad.bottom;
+
+    ctx.clearRect(0, 0, w, h);
+
+    const values = points.map(p => p.temp);
+    const minTemp = Math.floor(Math.min(...values) / 10) * 10;
+    const maxTemp = Math.ceil(Math.max(...values) / 10) * 10;
+    const range = maxTemp - minTemp || 10;
+
+    ctx.strokeStyle = '#1e1e1e';
+    ctx.lineWidth = 1;
+    const gridLines = isNarrow ? 3 : 4;
+    for (let i = 0; i <= gridLines; i++) {
+      const y = pad.top + (ch / gridLines) * i;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, y);
+      ctx.lineTo(w - pad.right, y);
+      ctx.stroke();
+      const label = (maxTemp - (range / gridLines) * i).toFixed(0);
+      ctx.fillStyle = '#555';
+      ctx.font = fontSize + 'px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(label + '°', pad.left - 3, y + 3);
+    }
+
+    const timeLabels = isNarrow ? 2 : 4;
+    for (let i = 0; i <= timeLabels; i++) {
+      const x = pad.left + (cw / timeLabels) * i;
+      ctx.beginPath();
+      ctx.moveTo(x, pad.top);
+      ctx.lineTo(x, h - pad.bottom);
+      ctx.stroke();
+      const minAgo = Math.round((timeLabels - i) * (60 / timeLabels));
+      ctx.fillStyle = '#555';
+      ctx.font = fontSize + 'px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(minAgo + 'm', x, h - 3);
+    }
+
+    const lineX = (i) => pad.left + (i / (points.length - 1)) * cw;
+    const lineY = (v) => pad.top + ch - ((v - minTemp) / range) * ch;
+
+    const gradient = ctx.createLinearGradient(0, pad.top, 0, h - pad.bottom);
+    gradient.addColorStop(0, 'rgba(204,68,68,0.25)');
+    gradient.addColorStop(0.5, 'rgba(204,204,68,0.20)');
+    gradient.addColorStop(1, 'rgba(68,170,68,0.05)');
+
+    ctx.beginPath();
+    ctx.moveTo(lineX(0), h - pad.bottom);
+    points.forEach((p, i) => {
+      ctx.lineTo(lineX(i), lineY(p.temp));
+    });
+    ctx.lineTo(lineX(points.length - 1), h - pad.bottom);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    points.forEach((p, i) => {
+      const x = lineX(i);
+      const y = lineY(p.temp);
+      const t = (p.temp - minTemp) / range;
+      const r = Math.round(Math.min(1, t * 2) * 204 + 51);
+      const g = Math.round(Math.max(0, 1 - Math.abs(t - 0.5) * 2) * 170 + 51);
+      const b = Math.round(Math.max(0, 1 - t) * 68);
+      ctx.strokeStyle = 'rgb(' + r + ',' + g + ',' + b + ')';
+      if (i === 0) {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    });
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    if (points.length > 0) {
+      const last = points[points.length - 1];
+      const lx = lineX(points.length - 1);
+      const ly = lineY(last.temp);
+      const dotR = isNarrow ? 1.5 : 2.5;
+      ctx.beginPath();
+      ctx.arc(lx, ly, dotR, 0, Math.PI * 2);
+      ctx.fillStyle = '#cc6666';
+      ctx.fill();
+    }
+  });
+}
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => drawCharts(tempsCache), 150);
+});
+
+async function fetchStats() {
+  try {
+    const res = await fetch(STATS_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (Array.isArray(data)) {
+      buildOrUpdateCards(data);
+      updateHeaderMeta();
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+async function fetchTemps() {
+  try {
+    const res = await fetch(TEMPS_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data && typeof data === 'object') {
+      drawCharts(data);
+    }
+  } catch (e) {
+    // ignore
+  }
+}
+
+fetchStats();
+fetchTemps();
+setInterval(fetchStats, POLL_INTERVAL);
+setInterval(fetchTemps, TEMPS_INTERVAL);
+</script>
+</body>
+</html>

@@ -1,0 +1,38 @@
+[package]
+name = "hwagent"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dotenvy = "0.15.7"
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+sysinfo = "0.39.2"
+tokio = { version = "1", features = ["full"] }
+
+
+
+[profile.release]
+# Optimize for size. 'z' is more aggressive than 's'.
+opt-level = 'z'     
+
+# Enable Link Time Optimization. 
+# It allows the linker to optimize across all crates in the dependency graph,
+# effectively removing dead code that wasn't caught at the crate level.
+lto = true          
+
+# Reduces the number of parallel code generation units to 1.
+# This makes LTO more effective but increases compile time.
+codegen-units = 1   
+
+# Disables stack unwinding. If the program panics, it immediately aborts.
+# This removes a significant amount of "unwinding" infrastructure code.
+panic = 'abort'     
+
+# Strip symbols and debug info automatically (available in Rust 1.59+).
+# This is equivalent to running the `strip` command manually.
+strip = true
+
+
+[target.aarch64-unknown-linux-musl]
+linker = "aarch64-linux-gnu-gcc"
