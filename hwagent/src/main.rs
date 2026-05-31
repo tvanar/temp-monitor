@@ -1,8 +1,8 @@
 use core::fmt;
 use dotenvy::dotenv;
 use serde::Serialize;
-use std::time::Duration;
 use std::env;
+use std::time::Duration;
 use sysinfo::{Components, System};
 use tokio::time::sleep;
 
@@ -30,9 +30,9 @@ impl fmt::Display for Stats {
 async fn main() {
     dotenv().ok();
 
-    // let server_url = env::var("SERVER_URL").expect("SERVER_URL must be set in .env");
+    let server_url = env::var("SERVER_URL").expect("SERVER_URL must be set in .env");
 
-    // let client = reqwest::Client::new();
+    let client = reqwest::Client::new();
 
     let mut sys = System::new_all();
     let mut components = Components::new_with_refreshed_list();
@@ -77,11 +77,11 @@ async fn main() {
             temp,
         };
 
-        // if let Err(e) = client.post(&server_url).json(&stats).send().await {
-        //     eprintln!("Failed to send stats: {}", e);
-        // }
+        if let Err(e) = client.post(&server_url).json(&stats).send().await {
+            eprintln!("Failed to send stats: {}", e);
+        }
 
-        println!("{}", stats);
+        // println!("{}", stats);
 
         sleep(Duration::from_secs(5)).await;
     }

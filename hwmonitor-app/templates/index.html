@@ -17,24 +17,20 @@
 
 <script>
 const STATS_URL = '/api/stats';
-const TEMPS_URL = '/api/temps?minutes=60';
-const POLL_INTERVAL = 3000;
-const TEMPS_INTERVAL = 30000;
+const TEMPS_URL = '/api/temps?minutes=120';
+const POLL_INTERVAL = 15000;
+const TEMPS_INTERVAL = 15000;
 
 let statsCache = {};
 let tempsCache = {};
 
-function fmtBytes(bytes) {
-  if (bytes >= 1<<30) return (bytes / (1<<30)).toFixed(1) + 'G';
-  if (bytes >= 1<<20) return (bytes / (1<<20)).toFixed(1) + 'M';
-  if (bytes >= 1<<10) return (bytes / (1<<10)).toFixed(1) + 'K';
-  return bytes + 'B';
+function fmtGB(bytes) {
+  return (bytes / (1<<30)).toFixed(1);
 }
 
 function fmtFreq(freq) {
-  if (freq >= 1000000) return (freq / 1000000).toFixed(1) + ' GHz';
-  if (freq >= 1000) return (freq / 1000).toFixed(1) + ' MHz';
-  return freq + ' Hz';
+  if (freq >= 1000) return (freq / 1000).toFixed(1) + ' GHz';
+  return freq + ' MHz';
 }
 
 function fmtTemp(temp) {
@@ -63,29 +59,18 @@ function buildOrUpdateCards(stats) {
         </div>
         <div class="stat-row">
           <span class="stat-label">CPU</span>
-          <div class="stat-bar-wrapper">
-            <div class="stat-bar-bg">
-              <div class="stat-bar-fill cpu"></div>
-            </div>
-          </div>
+          <span class="stat-value cpu-pct"></span>
+        </div>
+        <div class="stat-row">
+          <span class="stat-label">FREQ</span>
           <span class="stat-value freq"></span>
         </div>
         <div class="stat-row">
           <span class="stat-label">RAM</span>
-          <div class="stat-bar-wrapper">
-            <div class="stat-bar-bg">
-              <div class="stat-bar-fill ram"></div>
-            </div>
-          </div>
           <span class="stat-value ram"></span>
         </div>
         <div class="stat-row">
           <span class="stat-label">TEMP</span>
-          <div class="stat-bar-wrapper">
-            <div class="stat-bar-bg">
-              <div class="stat-bar-fill temp"></div>
-            </div>
-          </div>
           <span class="stat-value temp-val"></span>
         </div>
         <div class="chart-container">
@@ -104,19 +89,10 @@ function buildOrUpdateCards(stats) {
     card.querySelector('.agent-status').textContent = 'ONLINE';
     card.querySelector('.agent-status').className = 'agent-status';
 
-    const cpuBar = card.querySelector('.stat-bar-fill.cpu');
-    cpuBar.style.width = Math.min(s.cpu_usage, 100) + '%';
-    cpuBar.parentElement.nextElementSibling.textContent = pct(s.cpu_usage) + ' / ' + fmtFreq(s.cpu_freq);
-
-    const rpct = s.ram_total > 0 ? (s.ram_usage / s.ram_total * 100) : 0;
-    const ramBar = card.querySelector('.stat-bar-fill.ram');
-    ramBar.style.width = Math.min(rpct, 100) + '%';
-    ramBar.parentElement.nextElementSibling.textContent = fmtBytes(s.ram_usage) + ' / ' + fmtBytes(s.ram_total);
-
-    const tpct = Math.min(s.temp / 100 * 100, 100);
-    const tempBar = card.querySelector('.stat-bar-fill.temp');
-    tempBar.style.width = tpct + '%';
-    tempBar.parentElement.nextElementSibling.textContent = fmtTemp(s.temp);
+    card.querySelector('.stat-value.cpu-pct').textContent = pct(s.cpu_usage);
+    card.querySelector('.stat-value.freq').textContent = fmtFreq(s.cpu_freq);
+    card.querySelector('.stat-value.ram').textContent = fmtGB(s.ram_usage) + ' / ' + fmtGB(s.ram_total) + ' GiB';
+    card.querySelector('.stat-value.temp-val').textContent = fmtTemp(s.temp);
 
     card.querySelector('.last-seen').textContent = new Date().toLocaleTimeString();
 
@@ -153,6 +129,10 @@ function drawCharts(temps) {
     if (!canvas) return;
     const points = temps[hostname];
     if (!points || points.length < 2) return;
+
+    const firstTime = new Date(points[0].time);
+    const lastTime = new Date(points[points.length - 1].time);
+    const totalMinutes = isFinite(lastTime - firstTime) ? Math.max((lastTime - firstTime) / 60000, 1) : points.length;
 
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth;
@@ -205,7 +185,7 @@ function drawCharts(temps) {
       ctx.moveTo(x, pad.top);
       ctx.lineTo(x, h - pad.bottom);
       ctx.stroke();
-      const minAgo = Math.round((timeLabels - i) * (60 / timeLabels));
+      const minAgo = Math.round((timeLabels - i) * (totalMinutes / timeLabels));
       ctx.fillStyle = '#555';
       ctx.font = fontSize + 'px monospace';
       ctx.textAlign = 'center';
