@@ -1,1 +1,1 @@
-This is a small webapp that collects system data on 
+This is a small webapp that collects system data and displays it.
