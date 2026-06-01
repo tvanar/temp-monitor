@@ -54,7 +54,9 @@ pub async fn add_data_handler(
         state.temp.insert(hostname.clone(), vec);
     }
 
-    state.current_stats.insert(hostname, stats);
+    state.current_stats.insert(hostname.clone(), stats);
+
+    state.last_seen.insert(hostname, Utc::now());
 
     StatusCode::OK
 }

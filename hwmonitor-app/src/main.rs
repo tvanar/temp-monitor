@@ -1,11 +1,11 @@
 use axum;
 use std::net::SocketAddr;
-mod handlers;
-mod routes;
-mod models;
-mod templates;
 mod errors;
+mod handlers;
+mod models;
+mod routes;
 mod state;
+mod templates;
 
 fn get_server_config() -> SocketAddr {
     let _ = dotenvy::dotenv().ok();

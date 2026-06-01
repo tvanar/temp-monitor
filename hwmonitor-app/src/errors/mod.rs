@@ -5,7 +5,6 @@ use axum::{
 
 pub enum AppError {
     TemplateError,
-    InvalidCredentials,
 }
 
 impl IntoResponse for AppError {
@@ -13,10 +12,6 @@ impl IntoResponse for AppError {
         match self {
             AppError::TemplateError => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "Template error").into_response()
-            }
-
-            AppError::InvalidCredentials => {
-                (StatusCode::UNAUTHORIZED, "Invalid Credentials").into_response()
             }
         }
     }
